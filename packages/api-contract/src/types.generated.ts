@@ -705,6 +705,18 @@ export interface ConversationListResponseDoc {
   errorMsg: string;
 }
 
+export interface ConversationPreviewMessageListResponseDoc {
+  data: ConversationPreviewMessageResponse[];
+  errorMsg: string;
+}
+
+export interface ConversationPreviewMessageResponse {
+  content: string;
+  errorMessage: string;
+  publicID: string;
+  role: "user" | "assistant";
+}
+
 export interface ConversationProjectListResponseDoc {
   data: ConversationProjectResponse[];
   errorMsg: string;
@@ -762,6 +774,28 @@ export interface ConversationRunListResponseDoc {
     total: number;
   };
   errorMsg: string;
+}
+
+export interface ConversationSearchListResponseDoc {
+  data: ConversationSearchPageResponse;
+  errorMsg: string;
+}
+
+export interface ConversationSearchPageResponse {
+  hasMore: boolean;
+  results: ConversationSearchResultResponse[];
+}
+
+export interface ConversationSearchResultResponse {
+  isStarred: boolean;
+  labelsJSON: string;
+  messageCount: number;
+  projectID: string;
+  projectName: string;
+  publicID: string;
+  status: string;
+  title: string;
+  updatedAt: string;
 }
 
 export interface ConversationShareResponse {
@@ -2716,6 +2750,11 @@ export interface UpdateBillingPlanRequest {
   /** @min 0 */
   periodCreditUSD: number;
   permissionGroupID?: number | null;
+}
+
+export interface UpdateConversationLabelsRequest {
+  /** @maxItems 6 */
+  labels: string[];
 }
 
 export interface UpdateConversationProjectRequest {
@@ -6448,6 +6487,29 @@ export namespace Conversations {
   }
 
   /**
+   * @description 分页搜索当前用户的会话标题、元数据、项目和消息正文，并返回是否还有下一页
+   * @tags chat
+   * @name SearchList
+   * @summary 搜索会话
+   * @request GET:/conversations/search
+   * @secure
+   */
+  export namespace SearchList {
+    export type RequestParams = {};
+    export type RequestQuery = {
+      /** 页码 */
+      page?: number;
+      /** 每页数量 */
+      page_size?: number;
+      /** 搜索关键词；为空时返回最近会话 */
+      q?: string;
+    };
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = ConversationSearchListResponseDoc;
+  }
+
+  /**
    * @description 批量关闭当前用户会话的公开分享链接
    * @tags chat
    * @name SharesRevokeCreate
@@ -6545,6 +6607,25 @@ export namespace Conversations {
   }
 
   /**
+   * @description 替换指定会话的标签；传入空数组可清空标签
+   * @tags chat
+   * @name LabelsPartialUpdate
+   * @summary 更新会话标签
+   * @request PATCH:/conversations/{id}/labels
+   * @secure
+   */
+  export namespace LabelsPartialUpdate {
+    export type RequestParams = {
+      /** 会话 public_id */
+      id: string;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = UpdateConversationLabelsRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = ConversationUpdateResponseDoc;
+  }
+
+  /**
    * @description 查询会话内消息列表
    * @tags chat
    * @name MessagesList
@@ -6585,6 +6666,25 @@ export namespace Conversations {
     export type RequestBody = SendMessageRequest;
     export type RequestHeaders = {};
     export type ResponseBody = SendMessageResponseDoc;
+  }
+
+  /**
+   * @description 返回当前用户会话最新分支最近 10 条用户或助手消息
+   * @tags chat
+   * @name MessagesPreviewList
+   * @summary 查询会话预览消息
+   * @request GET:/conversations/{id}/messages/preview
+   * @secure
+   */
+  export namespace MessagesPreviewList {
+    export type RequestParams = {
+      /** 会话 public_id */
+      id: string;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = ConversationPreviewMessageListResponseDoc;
   }
 
   /**
