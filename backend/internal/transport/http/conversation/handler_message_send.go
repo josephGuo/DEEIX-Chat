@@ -368,6 +368,10 @@ func handleSendMessageError(c *gin.Context, err error) {
 		response.Error(c, http.StatusBadRequest, "too many files in one message")
 	case errors.Is(err, appconversation.ErrTooManySelectedTools):
 		response.Error(c, http.StatusBadRequest, "too many selected tools")
+	case errors.Is(err, appconversation.ErrMultipleImageAttachmentProcessors):
+		response.Error(c, http.StatusBadRequest, "multiple image attachment processors selected")
+	case errors.Is(err, appconversation.ErrImageAttachmentProcessingFailed):
+		response.Error(c, http.StatusBadGateway, "image attachment processing failed")
 	case errors.Is(err, appconversation.ErrTooManySelectedSkills):
 		response.Error(c, http.StatusBadRequest, "too many selected skills")
 	case errors.Is(err, appconversation.ErrSkillNotFound):
@@ -384,6 +388,8 @@ func handleSendMessageError(c *gin.Context, err error) {
 		response.Error(c, http.StatusBadRequest, "embedding unavailable for current file capability")
 	case errors.Is(err, appconversation.ErrModelRouteNotConfigured):
 		response.Error(c, http.StatusServiceUnavailable, "model route not configured")
+	case errors.Is(err, appconversation.ErrGeneratedMediaArtifactUnavailable):
+		response.ErrorWithCode(c, http.StatusBadGateway, appconversation.MessageErrorCode(err), "generated media artifact is temporarily unavailable")
 	case errors.Is(err, appconversation.ErrUpstreamEmptyResponse):
 		response.Error(c, http.StatusBadGateway, "model returned empty response")
 	case errors.Is(err, appconversation.ErrUpstreamRequestFailed):

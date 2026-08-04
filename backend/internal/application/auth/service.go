@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -22,12 +21,11 @@ import (
 	domainuser "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/user"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/geoip"
-	platformtracing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/observability/tracing"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/identityprovider"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/conv"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/token"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/requestmeta"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
@@ -43,7 +41,7 @@ type Service struct {
 	repo                 repository.AuthRepository
 	geoResolver          *geoip.Client
 	subscriptionResolver subscriptionResolver
-	providerHTTPClient   *http.Client
+	providerHTTPClient   *identityprovider.Client
 	logger               *zap.Logger
 	storeProvider        appstorage.Provider
 	auditWriter          auditWriter
@@ -66,21 +64,13 @@ type avatarFileValidator interface {
 	ValidateImageFile(ctx context.Context, userID uint, fileID string) error
 }
 
-// NewService 创建服务。
-func NewService(cfg config.Config, repo repository.AuthRepository, geoResolver *geoip.Client) *Service {
-	return NewServiceWithRuntime(config.NewRuntime(cfg), repo, geoResolver)
-}
-
 // NewServiceWithRuntime 创建使用运行时配置容器的服务。
-func NewServiceWithRuntime(cfg *config.Runtime, repo repository.AuthRepository, geoResolver *geoip.Client) *Service {
-	env := ""
-	ssrfProtectionEnabled := false
-	if cfg != nil {
-		snapshot := cfg.Snapshot()
-		env = snapshot.Env
-		ssrfProtectionEnabled = snapshot.SSRFProtectionEnabled
-	}
-	providerHTTPClient := newAuthOutboundHTTPClient(env, ssrfProtectionEnabled)
+func NewServiceWithRuntime(
+	cfg *config.Runtime,
+	repo repository.AuthRepository,
+	geoResolver *geoip.Client,
+	providerHTTPClient *identityprovider.Client,
+) *Service {
 	return &Service{
 		cfg:                cfg,
 		repo:               repo,
@@ -88,12 +78,6 @@ func NewServiceWithRuntime(cfg *config.Runtime, repo repository.AuthRepository, 
 		providerHTTPClient: providerHTTPClient,
 		storeProvider:      appstorage.NewRuntimeProvider(cfg, nil),
 	}
-}
-
-func newAuthOutboundHTTPClient(env string, ssrfProtectionEnabled bool) *http.Client {
-	client := security.NewOutboundHTTPClient(env, ssrfProtectionEnabled, providerHTTPTimeout)
-	client.Transport = platformtracing.NewHTTPTransport(client.Transport)
-	return client
 }
 
 // SetSubscriptionResolver 注入订阅派生解析能力。
