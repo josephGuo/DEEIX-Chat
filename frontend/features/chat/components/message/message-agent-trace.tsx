@@ -21,9 +21,11 @@ import {
 import {
   AgentToolStepRow,
   buildToolGroupSteps,
+  isToolChainStepActive,
   type ToolChainStep,
 } from "@/features/chat/components/message/message-agent-tool-step";
 import { StreamdownRender } from "@/shared/components/markdown/streamdown-render";
+import { useAutoExpandDisclosure } from "@/shared/hooks/use-auto-expand-disclosure";
 import { cn } from "@/lib/utils";
 import { TRACE_ROOT_CLASS } from "@/features/chat/components/shared/message-process-trace-shared";
 import {
@@ -281,31 +283,19 @@ function TraceThinkRow({
   block,
   streaming,
   durationMS,
-  autoCollapseReady,
+  autoExpand,
   labels,
 }: {
   block: ChatTraceBlock;
   streaming: boolean;
   durationMS?: number;
-  autoCollapseReady?: boolean;
+  autoExpand: boolean;
   labels: ProcessTraceLabels;
 }) {
-  const [open, setOpen] = React.useState(streaming);
-  const wasStreamingRef = React.useRef(streaming);
-
-  React.useEffect(() => {
-    if (streaming) {
-      setOpen(true);
-      wasStreamingRef.current = true;
-      return;
-    }
-    if (wasStreamingRef.current && autoCollapseReady) {
-      setOpen(false);
-    }
-    if (autoCollapseReady) {
-      wasStreamingRef.current = false;
-    }
-  }, [autoCollapseReady, streaming]);
+  const { open, onOpenChange } = useAutoExpandDisclosure({
+    active: streaming,
+    autoExpand,
+  });
 
   const durationText = formatTraceStepDuration(durationMS);
 
@@ -324,7 +314,8 @@ function TraceThinkRow({
         duration={durationText ? labels.think.duration(durationText) : undefined}
         open={open}
         expandable
-        onOpenChange={setOpen}
+        loading={streaming}
+        onOpenChange={onOpenChange}
       >
         <StreamdownRender content={block.contentMarkdown} streaming={streaming} variant="thinking" />
       </AgentTraceStep>
@@ -335,11 +326,13 @@ function TraceThinkRow({
 function AgentTraceTimeline({
   items,
   labels,
-  autoCollapseReady,
+  autoExpandThinking,
+  autoExpandToolCalls,
 }: {
   items: TraceTimelineItem[];
   labels: ProcessTraceLabels;
-  autoCollapseReady?: boolean;
+  autoExpandThinking: boolean;
+  autoExpandToolCalls: boolean;
 }) {
   return (
     <div className="relative">
@@ -352,11 +345,16 @@ function AgentTraceTimeline({
               block={item.block}
               streaming={item.streaming}
               durationMS={item.durationMS}
-              autoCollapseReady={autoCollapseReady}
+              autoExpand={autoExpandThinking}
               labels={labels}
             />
           ) : (
-            <AgentToolStepRow key={item.key} step={item.step} labels={labels} />
+            <AgentToolStepRow
+              key={item.key}
+              step={item.step}
+              labels={labels}
+              autoExpand={autoExpandToolCalls}
+            />
           ),
         )}
       </ol>
@@ -370,6 +368,8 @@ export function MessageAgentTrace({
   activeThinkBlock,
   messageStreaming,
   autoCollapseReady,
+  autoExpandThinking = true,
+  autoExpandToolCalls = true,
   runDurationMS,
 }: {
   events: ChatTraceEvent[];
@@ -377,6 +377,8 @@ export function MessageAgentTrace({
   activeThinkBlock?: ChatTraceBlock;
   messageStreaming?: boolean;
   autoCollapseReady?: boolean;
+  autoExpandThinking?: boolean;
+  autoExpandToolCalls?: boolean;
   runDurationMS?: number;
 }) {
   const labels = useProcessTraceLabels();
@@ -415,22 +417,31 @@ export function MessageAgentTrace({
     return list;
   }, [groupToolSteps, groups, messageStreaming]);
 
-  const [accordionValue, setAccordionValue] = React.useState(() => (messageStreaming ? "message-trace-timeline" : ""));
-  const wasStreamingRef = React.useRef(Boolean(messageStreaming));
+  const thinkingActive = Boolean(
+    messageStreaming && items.some((item) => item.kind === "think" && item.streaming),
+  );
+  const toolCallActive = Boolean(
+    messageStreaming && items.some((item) => item.kind === "tool" && isToolChainStepActive(item.step)),
+  );
+  const traceActive = thinkingActive || toolCallActive;
+  const [accordionValue, setAccordionValue] = React.useState(() =>
+    traceActive ? "message-trace-timeline" : "",
+  );
+  const wasActiveRef = React.useRef(traceActive);
 
   React.useEffect(() => {
-    if (messageStreaming) {
+    if (traceActive) {
       setAccordionValue("message-trace-timeline");
-      wasStreamingRef.current = true;
+      wasActiveRef.current = true;
       return;
     }
-    if (wasStreamingRef.current && autoCollapseReady) {
+    if (wasActiveRef.current && autoCollapseReady) {
       setAccordionValue("");
     }
     if (autoCollapseReady) {
-      wasStreamingRef.current = false;
+      wasActiveRef.current = false;
     }
-  }, [autoCollapseReady, messageStreaming]);
+  }, [autoCollapseReady, traceActive]);
 
   if (items.length === 0) {
     return null;
@@ -441,20 +452,19 @@ export function MessageAgentTrace({
   const durationText = formatTraceRunDuration(runDurationMS);
 
   const subtitleParts: string[] = [];
-  if (renderedToolSteps.length > 0) {
-    subtitleParts.push(labels.run.toolCalls(renderedToolSteps.length));
-  }
   if (thinkRounds > 0) {
     subtitleParts.push(labels.run.thinkRounds(thinkRounds));
+  }
+  if (renderedToolSteps.length > 0) {
+    subtitleParts.push(labels.run.toolCalls(renderedToolSteps.length));
   }
   if (durationText) {
     subtitleParts.push(labels.run.duration(durationText));
   }
   const subtitle = subtitleParts.join(labels.run.labelSeparator);
 
-  const title = messageStreaming ? labels.run.titleActive : labels.run.titleDone;
+  const title = traceActive ? labels.run.titleActive : labels.run.titleDone;
   const open = accordionValue === "message-trace-timeline";
-
   return (
     <div className={TRACE_ROOT_CLASS}>
       <Accordion
@@ -475,10 +485,10 @@ export function MessageAgentTrace({
                   render={<span />}
                   className={cn(
                     "inline-flex min-h-0 w-auto text-[13px] font-medium transition-colors",
-                    !messageStreaming && "text-muted-foreground group-hover/trace:text-foreground",
+                    !traceActive && "text-muted-foreground group-hover/trace:text-foreground",
                   )}
                 >
-                  <MarkerContent className="min-w-0">{title}</MarkerContent>
+                  <MarkerContent className={cn("min-w-0", traceActive && "shimmer")}>{title}</MarkerContent>
                 </Marker>
               </div>
               {subtitle ? (
@@ -493,7 +503,12 @@ export function MessageAgentTrace({
             />
           </AccordionTrigger>
           <AccordionContent className="px-0 pb-0 pt-1.5 duration-[350ms] ease-in-out">
-            <AgentTraceTimeline items={items} labels={labels} autoCollapseReady={autoCollapseReady} />
+            <AgentTraceTimeline
+              items={items}
+              labels={labels}
+              autoExpandThinking={autoExpandThinking}
+              autoExpandToolCalls={autoExpandToolCalls}
+            />
           </AccordionContent>
         </AccordionItem>
       </Accordion>
