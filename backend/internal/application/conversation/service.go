@@ -17,6 +17,7 @@ import (
 	apprag "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/rag"
 	appskill "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/skill"
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
+	domainbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/billing"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainknowledgebase "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/knowledgebase"
 	domainmcp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/mcp"
@@ -119,7 +120,7 @@ type llmGateway interface {
 type Service struct {
 	cfg                   *config.Runtime
 	repo                  repository.ConversationRepository
-	cache                 repository.ConversationCacheRepository
+	cache                 repository.UserSettingCacheRepository
 	routeResolver         routeResolver
 	memoryRecorder        memoryRecorder
 	mcpRepo               mcpToolResolver
@@ -203,6 +204,8 @@ type SendMessageInput struct {
 	SourceMessagePublicID   string
 	BranchReason            string
 	Cancelable              bool
+	// UsageAuthorization 是请求级计费授权；提示词形状确定后据此把预算预留抬高到预估成本。
+	UsageAuthorization *domainbilling.UsageAuthorization
 	// OnEvent 用于向调用方推送中间事件（如 rag_search），流式场景使用。
 	OnEvent func(eventType string, payload map[string]interface{}) error
 }
@@ -238,7 +241,10 @@ type SendMessageResult struct {
 	CacheWrite1hTokens  int64
 	ServerSideToolUsage map[string]int64
 	// MCPToolUsage 聚合本次运行成功的 MCP 调用计量，供计费台账消费。
-	MCPToolUsage    []MCPToolUsageItem
+	MCPToolUsage []MCPToolUsageItem
+	// LLMCallCount 是本次运行成功返回的上游 LLM 调用数，工具循环的每次回灌都是一次独立调用；
+	// 按次计费按该计数结算，中断运行由计费层保底至少计 1 次。
+	LLMCallCount    int
 	LatencyMS       int64
 	DurationSeconds int64
 	StartedAt       time.Time
@@ -256,29 +262,9 @@ type MessageFeedbackResult struct {
 	ThumbsDownCount int64
 }
 
-// NewService 创建服务。
-func NewService(
-	cfg config.Config,
-	repo repository.ConversationRepository,
-	cache repository.ConversationCacheRepository,
-	routeResolver routeResolver,
-	memoryRecorder memoryRecorder,
-	llmClient llmGateway,
-	mediaDownloader generatedMediaDownloader,
-	mcpClient mcpToolCaller,
-	embedClient apprag.EmbeddingClient,
-	uploadSvc *appupload.Service,
-	compactSvc *appcompact.Service,
-	embeddingSvc *appembedding.Service,
-	processingSvc *appprocessing.Service,
-	extractSvc *extraction.Service,
-	ragSvc *apprag.Service,
-	logger *zap.Logger,
-) *Service {
-	return NewServiceWithRuntime(config.NewRuntime(cfg), repo, cache, routeResolver, memoryRecorder, llmClient, mediaDownloader, mcpClient, embedClient, uploadSvc, compactSvc, embeddingSvc, processingSvc, extractSvc, ragSvc, logger)
-}
-
 // NewServiceWithRuntime 创建使用运行时配置容器的服务。
+// 压缩、embedding、处理流水线、抽取与 RAG 服务由组合根装配后注入；上传服务的钩子需要回调本服务的
+// 文件能力与处理流水线，因此基于同一仓储在这里装配。
 func NewServiceWithRuntime(
 	cfg *config.Runtime,
 	repo repository.ConversationRepository,
@@ -288,8 +274,6 @@ func NewServiceWithRuntime(
 	llmClient llmGateway,
 	mediaDownloader generatedMediaDownloader,
 	mcpClient mcpToolCaller,
-	embedClient apprag.EmbeddingClient,
-	uploadSvc *appupload.Service,
 	compactSvc *appcompact.Service,
 	embeddingSvc *appembedding.Service,
 	processingSvc *appprocessing.Service,
@@ -316,51 +300,29 @@ func NewServiceWithRuntime(
 		generationStreams: newGenerationStreamRegistry(cache, defaultGenerationStreamOptions()),
 		imageContextCache: defaultPreparedConversationImageCache(),
 	}
-	if extractSvc == nil {
-		extractSvc = extraction.NewServiceWithRuntime(cfg)
-	}
 	extractSvc.SetObjectStoreProvider(svc.storeProvider)
-	if embeddingSvc == nil {
-		embeddingSvc = appembedding.NewServiceWithRuntime(cfg, repo, extractSvc, embedClient, logger)
-	}
-	if processingSvc == nil {
-		processingSvc = appprocessing.NewServiceWithRuntime(cfg, repo, cache, extractSvc, embeddingSvc, logger, appprocessing.DefaultExtractorVersion)
-	}
-	if uploadSvc == nil {
-		uploadSvc = appupload.NewServiceWithRuntime(cfg, repo, logger, appupload.Hooks{
-			ResolveCapability: func(ctx context.Context) appupload.FileCapability {
-				capability := svc.resolveChatFileCapability(ctx)
-				return appupload.FileCapability{
-					RAGAvailable:         capability.RAGAvailable,
-					EffectiveDocMaxBytes: capability.EffectiveDocMaxBytes,
-				}
-			},
-			InitializeUploadedFile: processingSvc.InitializeUploadedFile,
-		}, appupload.ErrorSet{
-			InvalidFileReference: ErrInvalidFileReference,
-			InvalidFileName:      ErrInvalidFileName,
-			FileNotFound:         ErrFileNotFound,
-			FileInUse:            ErrFileInUse,
-			StorageQuotaExceeded: ErrStorageQuotaExceeded,
-			FileTooLarge:         ErrFileTooLarge,
-			MIMEBlocked:          ErrMIMEBlocked,
-			EmbeddingUnavailable: ErrEmbeddingUnavailable,
-			DangerousMIMEType:    ErrDangerousMIMEType,
-		}, appprocessing.DefaultExtractorVersion)
-	}
+	uploadSvc := appupload.NewServiceWithRuntime(cfg, repo, logger, appupload.Hooks{
+		ResolveCapability: func(ctx context.Context) appupload.FileCapability {
+			capability := svc.resolveChatFileCapability(ctx)
+			return appupload.FileCapability{
+				RAGAvailable:         capability.RAGAvailable,
+				EffectiveDocMaxBytes: capability.EffectiveDocMaxBytes,
+			}
+		},
+		InitializeUploadedFile: processingSvc.InitializeUploadedFile,
+	}, appupload.ErrorSet{
+		InvalidFileReference: ErrInvalidFileReference,
+		InvalidFileName:      ErrInvalidFileName,
+		FileNotFound:         ErrFileNotFound,
+		FileInUse:            ErrFileInUse,
+		StorageQuotaExceeded: ErrStorageQuotaExceeded,
+		FileTooLarge:         ErrFileTooLarge,
+		MIMEBlocked:          ErrMIMEBlocked,
+		EmbeddingUnavailable: ErrEmbeddingUnavailable,
+		DangerousMIMEType:    ErrDangerousMIMEType,
+	}, appprocessing.DefaultExtractorVersion)
 	uploadSvc.SetObjectStoreProvider(svc.storeProvider)
-	if compactSvc == nil {
-		compactSvc = appcompact.NewServiceWithRuntime(cfg, repo, logger)
-	}
-	if ragSvc == nil {
-		ragSvc = apprag.NewServiceWithRuntime(cfg, repo, cache, embedClient)
-	}
 	svc.uploadSvc = uploadSvc
-	svc.compactSvc = compactSvc
-	svc.embeddingSvc = embeddingSvc
-	svc.processingSvc = processingSvc
-	svc.extractSvc = extractSvc
-	svc.ragSvc = ragSvc
 	// 注入 LLM 语义压缩回调（在 svc 完全初始化后绑定）
 	svc.compactSvc.SetLLMSummarizer(svc.callCompactLLM)
 	return svc
