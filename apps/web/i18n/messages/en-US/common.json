@@ -47,7 +47,7 @@
     "recent": "Recent",
     "files": "Files",
     "knowledgeBases": "Knowledge bases",
-    "skillsPrompt": "Skills & Prompts",
+    "library": "Library",
     "searchTitle": "Search",
     "searchDescription": "Search conversation titles, labels, projects, and message content",
     "searchPlaceholder": "Search conversations or message content",
@@ -74,6 +74,9 @@
     "announcements": "Announcements",
     "language": "Language",
     "upgradePlan": "Upgrade plan",
+    "desktopDownload": {
+      "label": "Download desktop app"
+    },
     "admin": "Admin",
     "logout": "Sign out",
     "loggingOut": "Signing out",
@@ -153,5 +156,9 @@
     "description": "Refresh the page to use the latest version.",
     "prerelease": "Beta",
     "stable": "Stable"
+  },
+  "attribution": {
+    "poweredBy": "Powered by",
+    "githubLink": "DEEIX Chat on GitHub"
   }
 }
