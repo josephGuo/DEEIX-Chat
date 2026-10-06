@@ -151,6 +151,14 @@ func toModelResponse(v appchannel.ModelView) ModelResponse {
 	}
 }
 
+// optionalPositiveInt 把 0 与负数视为未知，返回 nil。
+func optionalPositiveInt(value int) *int {
+	if value <= 0 {
+		return nil
+	}
+	return &value
+}
+
 func optionalTrimmedString(value string) *string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -434,6 +442,9 @@ type UpstreamModelSyncPlanResponse struct {
 	InactivatedModels []string `json:"inactivatedModels"`
 	UnchangedModels   []string `json:"unchangedModels"`
 	ProtectedModels   []string `json:"protectedModels"`
+	// UnresolvedProtocolModels 为同步后没有建议协议的远端模型：模型类型推断不出协议，需要为上游设置对应默认协议，
+	// 或绑定时手动选择。它们仍会写入目录，与上面的分类不互斥。
+	UnresolvedProtocolModels []string `json:"unresolvedProtocolModels"`
 }
 
 func toUpstreamRemoteModelsResponse(d appchannel.UpstreamRemoteModelsData) UpstreamRemoteModelsResponse {
@@ -457,12 +468,13 @@ func toUpstreamRemoteModelsResponse(d appchannel.UpstreamRemoteModelsData) Upstr
 		Items:      items,
 		SnapshotID: d.SnapshotID,
 		SyncPlan: UpstreamModelSyncPlanResponse{
-			AddedModels:       stringList(d.SyncPlan.AddedModels),
-			UpdatedModels:     stringList(d.SyncPlan.UpdatedModels),
-			ReactivatedModels: stringList(d.SyncPlan.ReactivatedModels),
-			InactivatedModels: stringList(d.SyncPlan.InactivatedModels),
-			UnchangedModels:   stringList(d.SyncPlan.UnchangedModels),
-			ProtectedModels:   stringList(d.SyncPlan.ProtectedModels),
+			AddedModels:              stringList(d.SyncPlan.AddedModels),
+			UpdatedModels:            stringList(d.SyncPlan.UpdatedModels),
+			ReactivatedModels:        stringList(d.SyncPlan.ReactivatedModels),
+			InactivatedModels:        stringList(d.SyncPlan.InactivatedModels),
+			UnchangedModels:          stringList(d.SyncPlan.UnchangedModels),
+			ProtectedModels:          stringList(d.SyncPlan.ProtectedModels),
+			UnresolvedProtocolModels: stringList(d.SyncPlan.UnresolvedProtocolModels),
 		},
 	}
 }
@@ -500,6 +512,8 @@ type SyncUpstreamModelsResponse struct {
 	InactivatedModels       int64                       `json:"inactivatedModels"`
 	ReactivatedModels       int                         `json:"reactivatedModels"`
 	SyncedModels            []UpstreamSyncModelResponse `json:"syncedModels"`
+	// UnresolvedProtocolModels 为写入目录但没有建议协议的远端模型，含义同同步计划中的同名字段。
+	UnresolvedProtocolModels []string `json:"unresolvedProtocolModels"`
 }
 
 func toSyncUpstreamModelsResponse(d appchannel.SyncUpstreamModelsData) SyncUpstreamModelsResponse {
@@ -518,17 +532,18 @@ func toSyncUpstreamModelsResponse(d appchannel.SyncUpstreamModelsData) SyncUpstr
 		})
 	}
 	return SyncUpstreamModelsResponse{
-		SnapshotID:              d.SnapshotID,
-		TotalUpstream:           d.TotalUpstream,
-		CreatedUpstreamModels:   d.CreatedUpstreamModels,
-		UpdatedUpstreamModels:   d.UpdatedUpstreamModels,
-		UnchangedUpstreamModels: d.UnchangedUpstreamModels,
-		ProtectedUpstreamModels: d.ProtectedUpstreamModels,
-		ExistingUpstreamModels:  d.ExistingUpstreamModels,
-		SkippedUpstreamModels:   d.SkippedUpstreamModels,
-		InactivatedModels:       d.InactivatedModels,
-		ReactivatedModels:       d.ReactivatedModels,
-		SyncedModels:            models,
+		SnapshotID:               d.SnapshotID,
+		TotalUpstream:            d.TotalUpstream,
+		CreatedUpstreamModels:    d.CreatedUpstreamModels,
+		UpdatedUpstreamModels:    d.UpdatedUpstreamModels,
+		UnchangedUpstreamModels:  d.UnchangedUpstreamModels,
+		ProtectedUpstreamModels:  d.ProtectedUpstreamModels,
+		ExistingUpstreamModels:   d.ExistingUpstreamModels,
+		SkippedUpstreamModels:    d.SkippedUpstreamModels,
+		InactivatedModels:        d.InactivatedModels,
+		ReactivatedModels:        d.ReactivatedModels,
+		SyncedModels:             models,
+		UnresolvedProtocolModels: stringList(d.UnresolvedProtocolModels),
 	}
 }
 
@@ -668,6 +683,10 @@ type PublicModelResponse struct {
 	InputModalities []string `json:"inputModalities"`
 	// InputModalitiesSource 为输入模态来源：explicit 为管理员在能力 JSON 中声明，catalog 为 models.dev 目录；未知时为 null。
 	InputModalitiesSource *string `json:"inputModalitiesSource" enums:"explicit,catalog" extensions:"x-nullable,!x-omitempty"`
+	// OutputModalities 为 models.dev 目录声明的输出模态（text / image / audio / video …），仅用于展示；未知时为空数组。
+	OutputModalities []string `json:"outputModalities"`
+	// ContextWindow 为上下文窗口（Token）：能力 JSON 显式配置优先，其次 models.dev 目录；未知时为 null。
+	ContextWindow *int `json:"contextWindow" extensions:"x-nullable,!x-omitempty"`
 }
 
 // PublicModelControlResponse 是一个用户端模型控件。
@@ -1073,6 +1092,8 @@ func toPublicModelResponse(v appchannel.ModelView, resolver appchannel.ModelCapa
 		Controls:              toPublicModelControlResponses(reasoning.Controls),
 		InputModalities:       append([]string{}, reasoning.InputModalities.Values...),
 		InputModalitiesSource: optionalTrimmedString(reasoning.InputModalities.Source),
+		OutputModalities:      append([]string{}, reasoning.OutputModalities...),
+		ContextWindow:         optionalPositiveInt(reasoning.ContextWindow),
 	}
 }
 

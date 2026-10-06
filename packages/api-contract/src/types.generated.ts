@@ -3255,6 +3255,8 @@ export interface PublicModelReasoningResponse {
 
 export interface PublicModelResponse {
   capabilitiesJSON: string;
+  /** ContextWindow 为上下文窗口（Token）：能力 JSON 显式配置优先，其次 models.dev 目录；未知时为 null。 */
+  contextWindow: number | null;
   /**
    * Controls 是用户端可操作的模型控件（管理员隐藏的控件不下发），顺序即展示顺序。
    * 用户请求只提交 {控件 id: 取值}，参数片段只保存在服务端。
@@ -3273,6 +3275,8 @@ export interface PublicModelResponse {
   /** InputModalitiesSource 为输入模态来源：explicit 为管理员在能力 JSON 中声明，catalog 为 models.dev 目录；未知时为 null。 */
   inputModalitiesSource: "explicit" | "catalog" | null;
   kindsJSON: string;
+  /** OutputModalities 为 models.dev 目录声明的输出模态（text / image / audio / video …），仅用于展示；未知时为空数组。 */
+  outputModalities: string[];
   platformModelName: string;
   pricing: PublicModelPricingResponse | null;
   protocolsJSON: string;
@@ -3947,6 +3951,8 @@ export interface SyncUpstreamModelsResponse {
   syncedModels: UpstreamSyncModelResponse[];
   totalUpstream: number;
   unchangedUpstreamModels: number;
+  /** UnresolvedProtocolModels 为写入目录但没有建议协议的远端模型，含义同同步计划中的同名字段。 */
+  unresolvedProtocolModels: string[];
   updatedUpstreamModels: number;
 }
 
@@ -4597,6 +4603,11 @@ export interface UpstreamModelSyncPlanResponse {
   protectedModels: string[];
   reactivatedModels: string[];
   unchangedModels: string[];
+  /**
+   * UnresolvedProtocolModels 为同步后没有建议协议的远端模型：模型类型推断不出协议，需要为上游设置对应默认协议，
+   * 或绑定时手动选择。它们仍会写入目录，与上面的分类不互斥。
+   */
+  unresolvedProtocolModels: string[];
   updatedModels: string[];
 }
 
